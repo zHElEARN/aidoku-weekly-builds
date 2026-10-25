@@ -1,0 +1,199 @@
+name: Build Aidoku (Weekly)
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Build even if this commit was already built
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: "0 0 * * 1"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-aidoku-weekly
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: Aidoku/Aidoku
+  APP_NAME: Aidoku.ipa
+  EXPECTED_BUNDLE_ID: com.zhelearn.Aidoku
+  EXPECTED_CONTAINER_ID: iCloud.com.zhelearn.Aidoku
+
+jobs:
+  build:
+    # Upstream needs the iOS 27 SDK, so this cannot run on a plain macOS image.
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Resolve upstream main
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA="$(gh api "repos/${UPSTREAM}/commits/main" --jq '.sha')"
+          echo "sha=${SHA}" >> "${GITHUB_OUTPUT}"
+          echo "Resolved ${UPSTREAM}@main: ${SHA}"
+
+      - name: Check whether this commit was already built
+        id: check
+        run: |
+          SHA="${{ steps.upstream.outputs.sha }}"
+          FORCE="${{ github.event.inputs.force == 'true' }}"
+          LAST="$(cat last-built-sha 2>/dev/null || true)"
+          if [ "${FORCE}" = "true" ] || [ "${LAST}" != "${SHA}" ]; then
+            echo "build=true" >> "${GITHUB_OUTPUT}"
+            echo "Building ${SHA} (last built: ${LAST:-none})"
+          else
+            echo "build=false" >> "${GITHUB_OUTPUT}"
+            echo "Already built: ${SHA}"
+          fi
+
+      - name: Checkout upstream source
+        if: steps.check.outputs.build == 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: Aidoku/Aidoku
+          ref: ${{ steps.upstream.outputs.sha }}
+          path: src
+          fetch-depth: 1
+
+      - name: Apply personal bundle identifier
+        if: steps.check.outputs.build == 'true'
+        run: |
+          python3 - <<'PY'
+          import pathlib
+
+          path = pathlib.Path("src/Aidoku/Aidoku.xcconfig")
+          lines = path.read_text().splitlines(keepends=True)
+          for index, line in enumerate(lines):
+              if line.strip().startswith("APP_ID_PREFIX") and "app.aidoku" in line:
+                  lines[index] = line.replace("app.aidoku", "com.zhelearn", 1)
+                  break
+          else:
+              raise SystemExit("APP_ID_PREFIX line not found in src/Aidoku/Aidoku.xcconfig")
+          path.write_text("".join(lines))
+          print("Applied com.zhelearn bundle identifier prefix")
+          PY
+
+      - name: Build
+        if: steps.check.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cd src
+          xcodebuild -scheme Aidoku -configuration Release archive \
+            -archivePath build/Aidoku.xcarchive \
+            -skipPackagePluginValidation \
+            CODE_SIGN_IDENTITY= CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+          mkdir -p Payload
+          cp -R build/Aidoku.xcarchive/Products/Applications/Aidoku.app Payload/
+          zip -qry -9 "../dist/${APP_NAME}" Payload
+
+      - name: Verify IPA
+        id: verify
+        if: steps.check.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          IPA="dist/${APP_NAME}"
+          test -s "${IPA}"
+
+          WORK="$(mktemp -d)"
+          trap 'rm -rf "${WORK}"' EXIT
+          unzip -p "${IPA}" 'Payload/*.app/Info.plist' > "${WORK}/Info.plist"
+
+          BUNDLE_ID="$(plutil -extract CFBundleIdentifier raw -o - "${WORK}/Info.plist")"
+          CONTAINER_ID="$(plutil -extract ICLOUD_CONTAINER_ID raw -o - "${WORK}/Info.plist")"
+          VERSION="$(plutil -extract CFBundleShortVersionString raw -o - "${WORK}/Info.plist")"
+          BUILD="$(plutil -extract CFBundleVersion raw -o - "${WORK}/Info.plist")"
+
+          test "${BUNDLE_ID}" = "${EXPECTED_BUNDLE_ID}"
+          test "${CONTAINER_ID}" = "${EXPECTED_CONTAINER_ID}"
+          test -n "${VERSION}"
+          test -n "${BUILD}"
+
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "size=$(stat -f%z "${IPA}")" >> "${GITHUB_OUTPUT}"
+          echo "Verified ${BUNDLE_ID} / ${CONTAINER_ID} / ${VERSION} (${BUILD})"
+
+      - name: Create release
+        id: release
+        if: steps.check.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.upstream.outputs.sha }}
+          VERSION: ${{ steps.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="weekly-$(date -u +%Y.%m.%d)"
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release delete "${TAG}" --repo "${GITHUB_REPOSITORY}" --yes --cleanup-tag
+          fi
+          gh release create "${TAG}" "dist/${APP_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target main \
+            --title "Aidoku ${VERSION} (weekly $(date -u +%Y.%m.%d))" \
+            --notes "Weekly build of Aidoku main.
+          Upstream commit: ${SHA}"
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+
+      - name: Update source
+        if: steps.check.outputs.build == 'true'
+        env:
+          SHA: ${{ steps.upstream.outputs.sha }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.verify.outputs.version }}
+          SIZE: ${{ steps.verify.outputs.size }}
+        run: |
+          set -euo pipefail
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${APP_NAME}"
+          jq --arg version "${VERSION}" --arg date "${DATE}" --arg url "${URL}" --argjson size "${SIZE}" '
+            .apps[0].version = $version
+            | .apps[0].versionDate = $date
+            | .apps[0].downloadURL = $url
+            | .apps[0].size = $size
+            | .apps[0].versions = [
+                {version: $version, date: $date, downloadURL: $url, size: $size}
+              ]
+          ' app-repo.json > app-repo.json.tmp
+          mv app-repo.json.tmp app-repo.json
+          jq empty app-repo.json
+
+      - name: Prune old releases
+        if: steps.check.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release list --repo "${GITHUB_REPOSITORY}" --limit 100 --json tagName \
+            --jq '.[] | select(.tagName | startswith("weekly-")) | .tagName' \
+            | tail -n +4 \
+            | while read -r TAG; do
+                [ -n "${TAG}" ] || continue
+                gh release delete "${TAG}" --repo "${GITHUB_REPOSITORY}" --yes --cleanup-tag
+              done
+
+      - name: Commit state and source
+        if: steps.check.outputs.build == 'true'
+        env:
+          SHA: ${{ steps.upstream.outputs.sha }}
+        run: |
+          set -euo pipefail
+          echo "${SHA}" > last-built-sha
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app-repo.json last-built-sha
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+          else
+            git commit -m "chore: build Aidoku weekly $(date -u +%Y.%m.%d) (${SHA:0:7})"
+            git push origin HEAD:main
+          fi

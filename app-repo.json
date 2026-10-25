@@ -1,41 +1,26 @@
 {
-  "name": "Aidoku Personal Builds",
-  "identifier": "com.zhelearn.aidoku-builds",
-  "subtitle": "Personal Aidoku builds with com.zhelearn.Aidoku identifier",
-  "description": "Personal builds of official Aidoku releases. Sign them with your own certificate.",
-  "website": "https://github.com/zHElEARN/aidoku-builds",
+  "name": "Aidoku Weekly Builds",
+  "identifier": "com.zhelearn.aidoku-weekly-builds",
+  "website": "https://github.com/zHElEARN/aidoku-weekly-builds",
   "apps": [
     {
-      "name": "Aidoku (Personal)",
+      "name": "Aidoku (Weekly)",
       "bundleIdentifier": "com.zhelearn.Aidoku",
       "developerName": "Aidoku",
-      "subtitle": "Personal Aidoku build",
-      "localizedDescription": "Personal build of official Aidoku releases, built with com.zhelearn.Aidoku bundle identifier.",
       "iconURL": "https://aidoku.app/images/apple-touch-icon.png",
       "tintColor": "ff375f",
+      "version": "0.9",
+      "versionDate": "2026-10-19T09:31:05Z",
+      "downloadURL": "https://github.com/zHElEARN/aidoku-weekly-builds/releases/download/v0.9-4-personal/Aidoku_personal.ipa",
+      "size": 14514175,
       "versions": [
         {
           "version": "0.9",
-          "date": "2026-10-16T22:25:27Z",
-          "downloadURL": "https://github.com/zHElEARN/aidoku-builds/releases/download/v0.9-4-personal/Aidoku_personal.ipa",
-          "size": 14514175,
-          "buildVersion": "4"
-        },
-        {
-          "version": "0.9",
-          "date": "2026-09-03T20:17:08Z",
-          "downloadURL": "https://github.com/zHElEARN/aidoku-builds/releases/download/v0.9-personal/Aidoku_personal.ipa",
-          "size": 11652147,
-          "minOSVersion": "15.0",
-          "buildVersion": "3"
+          "date": "2026-10-19T09:31:05Z",
+          "downloadURL": "https://github.com/zHElEARN/aidoku-weekly-builds/releases/download/v0.9-4-personal/Aidoku_personal.ipa",
+          "size": 14514175
         }
-      ],
-      "version": "0.9",
-      "versionDate": "2026-10-16T22:25:27Z",
-      "downloadURL": "https://github.com/zHElEARN/aidoku-builds/releases/download/v0.9-4-personal/Aidoku_personal.ipa",
-      "size": 14514175,
-      "minOSVersion": "15.0",
-      "buildVersion": "4"
+      ]
     }
   ],
   "news": []
